@@ -1,0 +1,11 @@
+.gitignore
+.bsp/
+.idea/
+.scala-build/
+jars_dir/
+out/
+**/target/
+.DS_Store
+*.log
+*.class
+*.jar
