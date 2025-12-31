@@ -7,6 +7,8 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: chatanalytics
       MYSQL_DATABASE: chatanalytics
+    volumes:
+      - './schema:/docker-entrypoint-initdb.d'
 #  spark:
 #    image: docker.io/bitnamilegacy/spark:latest
 #    environment:
@@ -23,9 +25,6 @@ services:
 #      - './target/scala-2.13/chat-analytics-assembly-1.0.0-SNAPSHOT.jar:/opt/bitnami/spark/ivy/chat-analytics-assembly-1.0.0-SNAPSHOT.jar'
 #      - './jars_dir:/opt/bitnami/spark/ivy:z'
 #
-#    extra_hosts:
-#      - "host.docker.internal:host-gateway"
-#
 #  spark-worker:
 #    image: docker.io/bitnamilegacy/spark:latest
 #    environment:
@@ -41,5 +40,3 @@ services:
 #    volumes:
 #      - './target/scala-2.13/chat-analytics-assembly-1.0.0-SNAPSHOT.jar:/opt/bitnami/spark/ivy/chat-analytics-assembly-1.0.0-SNAPSHOT.jar'
 #      - './jars_dir:/opt/bitnami/spark/ivy:z'
-#    extra_hosts:
-#      - "host.docker.internal:host-gateway"
