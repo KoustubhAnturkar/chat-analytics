@@ -61,7 +61,7 @@ The analytics service consists of three main components:
 #### 3. **Infrastructure**
 - **Apache Spark Cluster**: Master (port 7077) + Worker nodes
 - **MySQL Database**: Stores analytics results (port 3306)
-- **Kafka**: Message source (consumed from main chat infrastructure)
+- **Kafka**: Message source (consumed from [main chat infrastructure](https://github.com/KoustubhAnturkar/chat-app))
 
 ### Technology Stack
 
