@@ -3,14 +3,17 @@ package com.example.chat
 import org.apache.spark.sql.{DataFrame, Row, SparkSession}
 import org.apache.spark.sql.protobuf.functions.from_protobuf
 import org.apache.spark.sql.functions._
-
-import java.sql.{Connection, PreparedStatement}
+import com.example.chat.analytics.dbpersistence.PersistAnalytics
 
 object QueueStream {
   def main(args: Array[String]): Unit = {
     val spark = SparkSession // TODO: Fetch from config
       .builder
       .appName("ChatAnalyticsStream")
+      .config("spark.driver.host", "127.0.0.1")
+      .config("spark.driver.bindAddress", "127.0.0.1")
+      .config("spark.blockManager.port", "0")
+      .config("spark.port.maxRetries", "64")
       .config("spark.ui.enabled", "false")
       .config("spark.sql.shuffle.partitions", "1")
       .master("local[*]")
@@ -34,113 +37,121 @@ object QueueStream {
           option("max.poll.interval.ms", "5000").
           load()
 
-    val channelMetricsDf = {
-      kafkaDf
-        .select(
-          from_protobuf(
-            col("value"),
-            "ChatMessage",
-            protoFileDescriptorPath
-          ).as("message")
-        )
-        .select(
-          col("message.channel.channel_id").as("channel_id"),
-          col("message.sender.user_id").as("user_id"),
-          len(col("message.body")).as("message_length"),
-          from_unixtime(
-            col("message.time_stamp").divide(1000)
-          ).cast("timestamp")
-            .as("timestamp")
-        ).withWatermark(
-          "timestamp",
-          "2 minutes"
-        ).groupBy(
-          col("channel_id"),
-          window(col("timestamp"), "1 minute")
-        ).agg(
-          count(lit(1)).as("message_count"),
-          approx_count_distinct("user_id").as("unique_user_count"),
-          round(avg("message_length"), 2).as("avg_message_length")
-        ).select(
-          col("channel_id"),
-          col("window.start").as("window_start"),
-          col("window.end").as("window_end"),
-          col("message_count"),
-          col("unique_user_count"),
-          col("avg_message_length")
-        )
-    }
+    val channelMetricsDf = getChannelMetricsDf(kafkaDf, protoFileDescriptorPath)
 
-//         channelMetricsDf
-//          .writeStream
-//          .format("console")
-//          .option("truncate", "false")
-//          .outputMode("update")
-//          .start()
-//          .awaitTermination()
+    val globalLatenciesDf = getGlobalLatenciesDf(kafkaDf, protoFileDescriptorPath)
 
-    val jdbcUrl = "jdbc:mysql://localhost:3306/chatanalytics" // TODO: Fetch from config
-    val jdbcUser = "root"
-    val jdbcPassword = "chatanalytics"
+//    globalLatenciesDf.
+//        writeStream
+//        .format("console")
+//        .option("truncate", "false")
+//        .outputMode("update")
+//        .start()
+//        .awaitTermination()
 
-    val dbProperties = new java.util.Properties()
-    dbProperties.setProperty("user", jdbcUser)
-    dbProperties.setProperty("password", jdbcPassword)
-    dbProperties.setProperty("driver", "com.mysql.cj.jdbc.Driver")
-
-    channelMetricsDf
-      .writeStream
-      .outputMode("update")
-      .foreachBatch { (batchDf: DataFrame, batchId: Long) =>
-
-        batchDf.foreachPartition { (partitionIter: Iterator[Row]) =>
-          var conn: Connection = null
-          var stmt: PreparedStatement = null
-
-          try {
-            conn = java.sql.DriverManager.getConnection(jdbcUrl, dbProperties)
-            conn.setAutoCommit(false)
-
-            stmt = conn.prepareStatement(
-              """
-          INSERT INTO channel_metrics_minute (
-            channel_id,
-            window_start,
-            window_end,
-            message_count,
-            active_users,
-            avg_message_len
-          )
-          VALUES (?, ?, ?, ?, ?, ?)
-          ON DUPLICATE KEY UPDATE
-            window_end = VALUES(window_end),
-            message_count = VALUES(message_count),
-            active_users = VALUES(active_users),
-            avg_message_len = VALUES(avg_message_len)
-          """
-            )
-
-            partitionIter.foreach { (row: Row) =>
-              stmt.setString(1, row.getAs[String]("channel_id"))
-              stmt.setTimestamp(2, row.getAs[java.sql.Timestamp]("window_start"))
-              stmt.setTimestamp(3, row.getAs[java.sql.Timestamp]("window_end"))
-              stmt.setInt(4, row.getAs[Long]("message_count").toInt)
-              stmt.setInt(5, row.getAs[Long]("unique_user_count").toInt)
-              stmt.setDouble(6, row.getAs[Double]("avg_message_length"))
-
-              stmt.addBatch()
-            }
-
-            stmt.executeBatch()
-            conn.commit()
-
-          } finally {
-            if (stmt != null) stmt.close()
-            if (conn != null) conn.close()
+    val channelMetricsQuery =
+      channelMetricsDf
+        .writeStream
+        .outputMode("update")
+        .foreachBatch {
+          (batchDf: DataFrame, batchId: Long) =>
+          batchDf.foreachPartition { (partitionIter: Iterator[Row]) =>
+            PersistAnalytics.writeChannelMetricsToDB(partitionIter)
           }
         }
-      }
-      .start()
-      .awaitTermination()
+        .start()
+
+    val globalLatenciesQuery =
+      globalLatenciesDf.
+        writeStream
+        .outputMode("update")
+        .foreachBatch{
+          (batchDf: DataFrame, batchId: Long) =>
+            batchDf.foreachPartition { (partitionIter: Iterator[Row]) =>
+              PersistAnalytics.writeGlobalLatenciesToDB(partitionIter)
+            }
+        }
+        .start()
+
+    globalLatenciesQuery.awaitTermination()
+    channelMetricsQuery.awaitTermination()
+  }
+
+  private def getChannelMetricsDf(kafkaDf: DataFrame, protoFileDescriptorPath: String): DataFrame = {
+    kafkaDf
+      // Convert protobuf binary to structured format
+      .select(
+        from_protobuf(
+          col("value"),
+          "ChatMessage",
+          protoFileDescriptorPath
+        ).as("message"),
+        col("timestamp")
+      )
+      // Extract relevant fields and compute metrics
+      .select(
+        col("message.channel.channel_id").as("channel_id"),
+        col("message.sender.user_id").as("user_id"),
+        len(col("message.body")).as("message_length"),
+        from_unixtime(
+          col("message.time_stamp").divide(1000)
+        ).cast("timestamp")
+          .as("message_timestamp")
+      )
+      // Aggregate metrics per channel in 1-minute tumbling windows
+      .withWatermark(
+        "message_timestamp",
+        "2 minutes"
+      ).groupBy(
+        col("channel_id"),
+        window(col("message_timestamp"), "1 minute")
+      ).agg(
+        count(lit(1)).as("message_count"),
+        approx_count_distinct("user_id").as("unique_user_count"),
+        round(avg("message_length"), 2).as("avg_message_length"),
+      )
+      // Final selection of columns
+      .select(
+        col("channel_id"),
+        col("window.start").as("window_start"),
+        col("window.end").as("window_end"),
+        col("message_count"),
+        col("unique_user_count"),
+        col("avg_message_length")
+      )
+  }
+
+  private def getGlobalLatenciesDf(kafkaDf: DataFrame, protoFileDescriptorPath: String): DataFrame = {
+    val latenciesDf =  kafkaDf.select(
+        from_protobuf(
+          col("value"),
+          "ChatMessage",
+          protoFileDescriptorPath
+        ).as("message"),
+        col("timestamp")
+      ).select(
+        from_unixtime(
+          col("message.time_stamp").divide(1000)
+        ).cast("timestamp")
+          .as("message_timestamp"),
+        (unix_millis(col("timestamp"))
+          .as("ingestion_timestamp") -
+          col("message.time_stamp")
+            .as("message_timestamp")).as("message_delay_ms")
+      ).withWatermark(
+        "message_timestamp",
+        "2 minutes"
+      ).groupBy(
+        window(col("message_timestamp"), "1 minute")
+      ).agg(
+        percentile_approx(col("message_delay_ms"), lit(0.50), lit(1000)).as("p50_message_delay_ms"),
+        percentile_approx(col("message_delay_ms"), lit(0.99), lit(1000)).as("p99_message_delay_ms")
+      ).select(
+        col("window.start").as("window_start"),
+        col("window.end").as("window_end"),
+        col("p50_message_delay_ms"),
+        col("p99_message_delay_ms")
+      )
+    latenciesDf
   }
 }

@@ -1,10 +1,7 @@
 CREATE TABLE global_metrics_minute (
                                        window_start      TIMESTAMP PRIMARY KEY,
+                                       window_end        TIMESTAMP NOT NULL,
 
-                                       total_messages    INT NOT NULL,
-                                       active_channels   INT NOT NULL,
-                                       active_users      INT NOT NULL,
-
-                                       p50_latency_ms    INT,
-                                       p95_latency_ms    INT
+                                       p50_latency_ms    LONG NOT NULL ,
+                                       p99_latency_ms    LONG NOT NULL
 );
