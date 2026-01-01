@@ -5,15 +5,16 @@ import org.apache.spark.sql.Row
 import java.sql.{Connection, PreparedStatement, Timestamp}
 import java.util.Date
 
-object PersistAnalytics {
-  private val jdbcUrl: String = "jdbc:mysql://localhost:3306/chatanalytics" // TODO: Fetch from config
+class PersistAnalytics(config: com.typesafe.config.Config) {
+  private val jdbcUrl: String = config.getString("jdbc.url")
   private val dbProperties: java.util.Properties = {
-    val jdbcUser = "root"
-    val jdbcPassword = "chatanalytics"
+    val jdbcUser = config.getString("jdbc.user")
+    val jdbcPassword = config.getString("jdbc.password")
+    val jdbcDriver = config.getString("jdbc.driver")
     val props = new java.util.Properties()
     props.setProperty("user", jdbcUser)
     props.setProperty("password", jdbcPassword)
-    props.setProperty("driver", "com.mysql.cj.jdbc.Driver")
+    props.setProperty("driver", jdbcDriver)
     props
   }
 

@@ -19,7 +19,8 @@ libraryDependencies ++= Seq(
   "org.apache.spark" %% "spark-sql-kafka-0-10" % sparkVersion,
 //  "com.thesamet.scalapb" %% "scalapb-runtime" % "0.11.3"
   "org.apache.spark" % "spark-protobuf_2.13" % sparkVersion,
-  "com.mysql" % "mysql-connector-j" % "9.5.0"
+  "com.mysql" % "mysql-connector-j" % "9.5.0",
+  "com.typesafe" % "config" % "1.4.2"
 )
 
 import sbtassembly.AssemblyPlugin.autoImport._

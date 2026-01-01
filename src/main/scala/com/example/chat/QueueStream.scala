@@ -4,39 +4,37 @@ import org.apache.spark.sql.{DataFrame, Row, SparkSession}
 import org.apache.spark.sql.protobuf.functions.from_protobuf
 import org.apache.spark.sql.functions._
 import com.example.chat.analytics.dbpersistence.PersistAnalytics
+import com.typesafe.config.ConfigFactory
 
 object QueueStream {
   def main(args: Array[String]): Unit = {
-    val spark = SparkSession // TODO: Fetch from config
+    val config = ConfigFactory.load()
+
+    val spark = SparkSession
       .builder
-      .appName("ChatAnalyticsStream")
-      .config("spark.driver.host", "127.0.0.1")
-      .config("spark.driver.bindAddress", "127.0.0.1")
-      .config("spark.blockManager.port", "0")
-      .config("spark.port.maxRetries", "64")
-      .config("spark.ui.enabled", "false")
-      .config("spark.sql.shuffle.partitions", "1")
-      .master("local[*]")
+      .appName(config.getString("spark.app.name"))
+      .master(config.getString("spark.master"))
       .getOrCreate()
+
+    val kafkaBootStrapServers = config.getString("kafka.bootstrap.servers")
 
     spark.sparkContext.setLogLevel("WARN")
 
     val protoFileDescriptorPath = if (args.length > 0) {
       args(0)
     } else {
-      "../proto/desc/chat_all.desc"
+      config.getString("proto.descriptor.path")
     }
 
     val kafkaDf = spark.readStream.
           format("kafka").
-          option("kafka.bootstrap.servers", "localhost:9092").
-          option("subscribe", "chat-stream").
-          option("startingOffsets", "earliest").
+          option("kafka.bootstrap.servers", kafkaBootStrapServers).
+          option("subscribe", config.getString("kafka.stream.subscribe")).
+          option("startingOffsets", config.getString("kafka.stream.starting.offsets")).
           option("key.deserializer" , "org.apache.kafka.common.serialization.StringDeserializer").
           option("value.deserializer" , "org.apache.kafka.common.serialization.ByteArrayDeserializer").
-          option("max.poll.interval.ms", "5000").
+          option("max.poll.interval.ms", config.getString("kafka.stream.max.poll.interval.ms")).
           load()
-
     val channelMetricsDf = getChannelMetricsDf(kafkaDf, protoFileDescriptorPath)
 
     val globalLatenciesDf = getGlobalLatenciesDf(kafkaDf, protoFileDescriptorPath)
@@ -58,7 +56,8 @@ object QueueStream {
         .foreachBatch {
           (batchDf: DataFrame, batchId: Long) =>
           batchDf.foreachPartition { (partitionIter: Iterator[Row]) =>
-            PersistAnalytics.writeChannelMetricsToDB(partitionIter)
+            val persistAnalytics = new PersistAnalytics(config)
+            persistAnalytics.writeChannelMetricsToDB(partitionIter)
           }
         }
         .start()
@@ -70,7 +69,8 @@ object QueueStream {
         .foreachBatch{
           (batchDf: DataFrame, batchId: Long) =>
             batchDf.foreachPartition { (partitionIter: Iterator[Row]) =>
-              PersistAnalytics.writeGlobalLatenciesToDB(partitionIter)
+              val persistAnalytics = new PersistAnalytics(config)
+              persistAnalytics.writeGlobalLatenciesToDB(partitionIter)
             }
         }
         .start()
@@ -82,7 +82,8 @@ object QueueStream {
         .foreachBatch{
           (batchDf: DataFrame, batchId: Long) =>
             batchDf.foreachPartition { (partitionIter: Iterator[Row]) =>
-              PersistAnalytics.writeUserMetricsToDB(partitionIter)
+              val persistAnalytics = new PersistAnalytics(config)
+              persistAnalytics.writeUserMetricsToDB(partitionIter)
             }
         }
         .start()

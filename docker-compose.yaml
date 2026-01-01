@@ -9,34 +9,41 @@ services:
       MYSQL_DATABASE: chatanalytics
     volumes:
       - './schema:/docker-entrypoint-initdb.d'
-#  spark:
-#    image: docker.io/bitnamilegacy/spark:latest
-#    environment:
-#      - SPARK_MODE=master
-#      - SPARK_RPC_AUTHENTICATION_ENABLED=no
-#      - SPARK_RPC_ENCRYPTION_ENABLED=no
-#      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
-#      - SPARK_SSL_ENABLED=no
-#      - SPARK_USER=spark
-#    ports:
-#      - '8090:8080'
-#      - '7077:7077'
-#    volumes:
-#      - './target/scala-2.13/chat-analytics-assembly-1.0.0-SNAPSHOT.jar:/opt/bitnami/spark/ivy/chat-analytics-assembly-1.0.0-SNAPSHOT.jar'
-#      - './jars_dir:/opt/bitnami/spark/ivy:z'
-#
-#  spark-worker:
-#    image: docker.io/bitnamilegacy/spark:latest
-#    environment:
-#      - SPARK_MODE=worker
-#      - SPARK_MASTER_URL=spark://spark:7077
-#      - SPARK_WORKER_MEMORY=1G
-#      - SPARK_WORKER_CORES=1
-#      - SPARK_RPC_AUTHENTICATION_ENABLED=no
-#      - SPARK_RPC_ENCRYPTION_ENABLED=no
-#      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
-#      - SPARK_SSL_ENABLED=no
-#      - SPARK_USER=spark
-#    volumes:
-#      - './target/scala-2.13/chat-analytics-assembly-1.0.0-SNAPSHOT.jar:/opt/bitnami/spark/ivy/chat-analytics-assembly-1.0.0-SNAPSHOT.jar'
-#      - './jars_dir:/opt/bitnami/spark/ivy:z'
+  spark:
+    build:
+      context: .
+      dockerfile: Dockerfile.spark
+    image: chat-analytics-spark:latest
+    container_name: chat-analytics-spark-1
+    environment:
+      - SPARK_MODE=master
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+    ports:
+      - '8090:8080'
+      - '7077:7077'
+    volumes:
+      - './target/scala-2.13/chat-analytics-assembly-1.0.0-SNAPSHOT.jar:/opt/bitnami/spark/ivy/chat-analytics-assembly-1.0.0-SNAPSHOT.jar'
+      - './jars_dir:/opt/bitnami/spark/ivy:z'
+      - '../proto/:/var/lib/proto:z'
+
+  spark-worker:
+    image: chat-analytics-spark:latest
+    depends_on:
+      - spark
+    container_name: spark-worker-1
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://chat-analytics-spark-1:7077
+      - SPARK_WORKER_MEMORY=1G
+      - SPARK_WORKER_CORES=1
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+    volumes:
+      - './target/scala-2.13/chat-analytics-assembly-1.0.0-SNAPSHOT.jar:/opt/bitnami/spark/ivy/chat-analytics-assembly-1.0.0-SNAPSHOT.jar'
+      - './jars_dir:/opt/bitnami/spark/ivy:z'
+      - '../proto/:/var/lib/proto:z'
