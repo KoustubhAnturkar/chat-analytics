@@ -41,7 +41,9 @@ object QueueStream {
 
     val globalLatenciesDf = getGlobalLatenciesDf(kafkaDf, protoFileDescriptorPath)
 
-//    globalLatenciesDf.
+    val globalUserMetricsDf = getGlobalUserMetricsDf(kafkaDf, protoFileDescriptorPath)
+
+//    globalUserMetricsDf.
 //        writeStream
 //        .format("console")
 //        .option("truncate", "false")
@@ -73,8 +75,21 @@ object QueueStream {
         }
         .start()
 
+    val userMetricsQuery =
+      globalUserMetricsDf.
+        writeStream
+        .outputMode("update")
+        .foreachBatch{
+          (batchDf: DataFrame, batchId: Long) =>
+            batchDf.foreachPartition { (partitionIter: Iterator[Row]) =>
+              PersistAnalytics.writeUserMetricsToDB(partitionIter)
+            }
+        }
+        .start()
+
     globalLatenciesQuery.awaitTermination()
     channelMetricsQuery.awaitTermination()
+    userMetricsQuery.awaitTermination()
   }
 
   private def getChannelMetricsDf(kafkaDf: DataFrame, protoFileDescriptorPath: String): DataFrame = {
@@ -153,5 +168,35 @@ object QueueStream {
         col("p99_message_delay_ms")
       )
     latenciesDf
+  }
+
+  def getGlobalUserMetricsDf(kafkaDf: DataFrame, protoFileDescriptorPath: String): DataFrame = {
+    // TODO: Implement global user metrics aggregation on Kafka stream
+    kafkaDf
+      .select(
+        from_protobuf(col("value"), "ChatMessage", protoFileDescriptorPath).as("message"),
+        col("timestamp")
+      )
+      .select(
+        col("message.sender.user_id").as("user_id"),
+        col("message.channel.channel_id").as("channel_id"),
+        from_unixtime(col("message.time_stamp").divide(1000)).cast("timestamp").as("message_timestamp")
+      )
+      .withWatermark("message_timestamp", "1 day 1 hour")
+      .groupBy(
+        col("user_id"),
+        window(col("message_timestamp"), "1 day", "1 day", "0 seconds")
+      )
+      .agg(
+        count(lit(1)).as("message_count"),
+        approx_count_distinct("channel_id").as("unique_channel_count")
+      )
+      .select(
+        col("user_id"),
+        col("window.start").as("window_start"),
+        col("window.end").as("window_end"),
+        col("message_count"),
+        col("unique_channel_count")
+      )
   }
 }

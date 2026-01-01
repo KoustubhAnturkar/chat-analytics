@@ -2,7 +2,8 @@ package com.example.chat.analytics.dbpersistence
 
 import org.apache.spark.sql.Row
 
-import java.sql.{Connection, PreparedStatement}
+import java.sql.{Connection, PreparedStatement, Timestamp}
+import java.util.Date
 
 object PersistAnalytics {
   private val jdbcUrl: String = "jdbc:mysql://localhost:3306/chatanalytics" // TODO: Fetch from config
@@ -93,6 +94,50 @@ object PersistAnalytics {
         stmt.setTimestamp(2, row.getAs[java.sql.Timestamp]("window_end"))
         stmt.setLong(3, row.getAs[Long]("p50_message_delay_ms"))
         stmt.setLong(4, row.getAs[Long]("p99_message_delay_ms"))
+
+        stmt.addBatch()
+      }
+
+      stmt.executeBatch()
+      conn.commit()
+
+    } finally {
+      if (stmt != null) stmt.close()
+      if (conn != null) conn.close()
+    }
+  }
+
+  def writeUserMetricsToDB(partitionIter: Iterator[Row]): Unit = {
+    var conn: Connection = null
+    var stmt: PreparedStatement = null
+
+    try {
+      conn = java.sql.DriverManager.getConnection(jdbcUrl, dbProperties)
+      conn.setAutoCommit(false)
+
+      stmt = conn.prepareStatement(
+        """
+          INSERT INTO user_engagement_daily (
+            user_id,
+            date,
+            messages_sent,
+            active_channels
+
+          )
+          VALUES (?,?,?,?)
+          ON DUPLICATE KEY UPDATE
+            user_id = VALUES(user_id),
+            date = CAST(VALUES(date) AS DATE),
+            messages_sent = VALUES(messages_sent),
+            active_channels = VALUES(active_channels)
+          """
+      )
+
+      partitionIter.foreach { (row: Row) =>
+        stmt.setString(1, row.getAs[String]("user_id"))
+        stmt.setTimestamp(2, row.getAs[Timestamp]("window_start"))
+        stmt.setLong(3, row.getAs[Long]("message_count"))
+        stmt.setLong(4, row.getAs[Long]("unique_channel_count"))
 
         stmt.addBatch()
       }
