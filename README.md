@@ -104,7 +104,7 @@ Tracks activity per channel with the following metrics:
 
 ### 2. **Global Latency Metrics** (1-minute windows)
 
-Measures end-to-end message delivery latency:
+Measures latency between message origination and processing by Kafka:
 - **P50 Latency**: Median message delay (milliseconds)
 - **P99 Latency**: 99th percentile message delay (milliseconds)
 
